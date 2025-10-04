@@ -61,9 +61,8 @@ def validate_output(original: str, formatted: str) -> bool:
 
 def reformat_text(
     text: str,
-    model: str = "accounts/fireworks/models/llama-v3p1-70b-instruct",
+    model: str = "accounts/fireworks/models/qwen3-235b-a22b-instruct-2507",
     temperature: float = 0.7,
-    max_tokens: int = 4096,
     system_prompt: Optional[str] = None,
     allow_paragraphs: bool = True,
     verbose: bool = False
@@ -75,7 +74,6 @@ def reformat_text(
         text: Input text to reformat
         model: Fireworks model to use
         temperature: Sampling temperature (0-1)
-        max_tokens: Maximum tokens to generate
         system_prompt: Optional system prompt to guide formatting choices
         allow_paragraphs: Whether to allow paragraph breaks
         verbose: Print debug information
@@ -130,8 +128,7 @@ Guidelines:
                 "type": "grammar",
                 "grammar": grammar
             },
-            temperature=temperature,
-            max_tokens=max_tokens
+            temperature=temperature
         )
 
         formatted_text = response.choices[0].message.content
