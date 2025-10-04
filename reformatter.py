@@ -7,6 +7,7 @@ Preserves exact word sequence while allowing LLM to add formatting.
 import os
 import sys
 import argparse
+import difflib
 from pathlib import Path
 from typing import Optional
 
@@ -33,7 +34,7 @@ def strip_formatting(text: str) -> str:
     return text
 
 
-def validate_output(original: str, formatted: str) -> bool:
+def validate_output(original: str, formatted: str) -> tuple[bool, Optional[str]]:
     """
     Validate that formatted output preserves exact original text.
 
@@ -42,7 +43,9 @@ def validate_output(original: str, formatted: str) -> bool:
         formatted: Formatted output text
 
     Returns:
-        True if text is preserved exactly
+        Tuple of (is_valid, diff_output)
+        - is_valid: True if text is preserved exactly
+        - diff_output: None if valid, otherwise a git-style diff showing differences
     """
     # Strip formatting from output
     stripped = strip_formatting(formatted)
@@ -51,12 +54,24 @@ def validate_output(original: str, formatted: str) -> bool:
     original_normalized = " ".join(original.split())
 
     if stripped != original_normalized:
-        print(f"ERROR: Text not preserved!")
-        print(f"Original: {original_normalized[:100]}...")
-        print(f"Stripped: {stripped[:100]}...")
-        return False
+        # Generate unified diff
+        diff = difflib.unified_diff(
+            original_normalized.splitlines(keepends=True),
+            stripped.splitlines(keepends=True),
+            fromfile='expected (original)',
+            tofile='actual (stripped output)',
+            lineterm=''
+        )
+        diff_text = ''.join(diff)
 
-    return True
+        # If diff is empty (single-line difference), show character-level diff
+        if not diff_text:
+            diff = difflib.ndiff([original_normalized], [stripped])
+            diff_text = '\n'.join(diff)
+
+        return False, diff_text
+
+    return True, None
 
 
 def reformat_text(
@@ -66,7 +81,7 @@ def reformat_text(
     system_prompt: Optional[str] = None,
     allow_paragraphs: bool = True,
     verbose: bool = False
-) -> str:
+) -> tuple[str, Optional[str]]:
     """
     Reformat text using grammar-constrained generation.
 
@@ -79,7 +94,9 @@ def reformat_text(
         verbose: Print debug information
 
     Returns:
-        Formatted text preserving exact words
+        Tuple of (formatted_text, validation_diff)
+        - formatted_text: The formatted output
+        - validation_diff: None if valid, otherwise a diff showing where text was not preserved
     """
     # Initialize Fireworks client
     api_key = os.getenv("FIREWORKS_API_KEY")
@@ -134,14 +151,12 @@ Guidelines:
         formatted_text = response.choices[0].message.content
 
         # Validate output preserves original text
-        if not validate_output(text, formatted_text):
-            raise ValueError("Output does not preserve original text exactly")
+        is_valid, diff = validate_output(text, formatted_text)
 
-        return formatted_text
+        return formatted_text, diff
 
     except Exception as e:
-        print(f"Error calling Fireworks API: {e}")
-        raise
+        raise RuntimeError(f"API call failed: {e}") from e
 
 
 def main():
@@ -210,7 +225,7 @@ def main():
 
     # Reformat text
     try:
-        formatted = reformat_text(
+        formatted, validation_diff = reformat_text(
             text,
             model=args.model,
             temperature=args.temperature,
@@ -219,7 +234,7 @@ def main():
             verbose=args.verbose
         )
 
-        # Write output
+        # Write output (always, even if validation failed)
         if args.output:
             if args.verbose:
                 print(f"Writing to {args.output}...", file=sys.stderr)
@@ -227,6 +242,18 @@ def main():
                 f.write(formatted)
         else:
             print(formatted)
+
+        # Check validation result
+        if validation_diff:
+            print("\n" + "="*80, file=sys.stderr)
+            print("VALIDATION FAILED: Output text does not match input!", file=sys.stderr)
+            print("="*80, file=sys.stderr)
+            print("\nDiff (- expected, + actual):", file=sys.stderr)
+            print(validation_diff, file=sys.stderr)
+            print("\n" + "="*80, file=sys.stderr)
+            if args.output:
+                print(f"Output saved to {args.output} despite validation failure", file=sys.stderr)
+            sys.exit(1)
 
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
