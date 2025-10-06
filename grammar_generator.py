@@ -33,9 +33,66 @@ def tokenize_text(text: str) -> List[str]:
     return tokens
 
 
-def generate_grammar(text: str, allow_paragraphs: bool = True) -> str:
+def tokenize_words(text: str) -> List[str]:
+    """Extract only alphanumeric word sequences from text"""
+    # Extract sequences of word characters (letters, digits, underscore, unicode)
+    words = re.findall(r'[\w]+', text, re.UNICODE)
+    return words
+
+
+def generate_grammar(text: str, strict_spacing: bool = False, allow_paragraphs: bool = True) -> str:
     """
-    Generate a CFG that enforces exact word sequence with formatting options.
+    Generate a grammar for text reformatting.
+
+    Args:
+        text: Input text
+        strict_spacing: If True, preserves exact spacing (complex grammar).
+                       If False (default), allows flexible punctuation/whitespace (simple grammar).
+        allow_paragraphs: Only used in strict mode - whether to allow paragraph breaks
+
+    Returns:
+        Grammar string in extended BNF format
+    """
+    if strict_spacing:
+        return generate_strict_grammar(text, allow_paragraphs=allow_paragraphs)
+    else:
+        return generate_flexible_grammar(text)
+
+
+def generate_flexible_grammar(text: str) -> str:
+    """
+    Generate simple grammar enforcing word sequence with flexible formatting.
+    Allows any punctuation, whitespace, or formatting between words.
+
+    Args:
+        text: Input text to extract word sequence from
+
+    Returns:
+        Grammar string in extended BNF format
+    """
+    words = tokenize_words(text)
+    if not words:
+        return 'root ::= ""'
+
+    # Escape words for grammar
+    escaped_words = [escape_for_grammar(word) for word in words]
+
+    grammar_lines = []
+    grammar_lines.append('# Separator: any non-alphanumeric characters (whitespace, punctuation, formatting, etc.)')
+    grammar_lines.append('sep ::= [^a-zA-Z0-9]+')
+    grammar_lines.append('')
+
+    # Build word sequence with separators
+    word_sequence = ' sep '.join([f'"{w}"' for w in escaped_words])
+    grammar_lines.append(f'root ::= sep? {word_sequence} sep?')
+
+    return '\n'.join(grammar_lines)
+
+
+def generate_strict_grammar(text: str, allow_paragraphs: bool = True) -> str:
+    """
+    Generate a CFG that enforces exact word sequence AND spacing with formatting options.
+    This is the old complex grammar that preserves exact spacing.
 
     Args:
         text: Input text to preserve exactly

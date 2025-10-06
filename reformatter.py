@@ -34,44 +34,67 @@ def strip_formatting(text: str) -> str:
     return text
 
 
-def validate_output(original: str, formatted: str) -> tuple[bool, Optional[str]]:
+def validate_output(original: str, formatted: str, strict_spacing: bool = False) -> tuple[bool, Optional[str]]:
     """
-    Validate that formatted output preserves exact original text.
+    Validate that formatted output preserves original text.
 
     Args:
         original: Original input text
         formatted: Formatted output text
+        strict_spacing: If True, validate exact text preservation. If False, validate word sequence only.
 
     Returns:
         Tuple of (is_valid, diff_output)
-        - is_valid: True if text is preserved exactly
+        - is_valid: True if text is preserved correctly
         - diff_output: None if valid, otherwise a git-style diff showing differences
     """
-    # Strip formatting from output
-    stripped = strip_formatting(formatted)
+    if strict_spacing:
+        # Strict mode: validate exact text preservation
+        # Strip formatting from output
+        stripped = strip_formatting(formatted)
 
-    # Normalize whitespace in original
-    original_normalized = " ".join(original.split())
+        # Normalize whitespace in original
+        original_normalized = " ".join(original.split())
 
-    if stripped != original_normalized:
-        # Generate unified diff
-        diff = difflib.unified_diff(
-            original_normalized.splitlines(keepends=True),
-            stripped.splitlines(keepends=True),
-            fromfile='expected (original)',
-            tofile='actual (stripped output)',
-            lineterm=''
-        )
-        diff_text = ''.join(diff)
+        if stripped != original_normalized:
+            # Generate unified diff
+            diff = difflib.unified_diff(
+                original_normalized.splitlines(keepends=True),
+                stripped.splitlines(keepends=True),
+                fromfile='expected (original)',
+                tofile='actual (stripped output)',
+                lineterm=''
+            )
+            diff_text = ''.join(diff)
 
-        # If diff is empty (single-line difference), show character-level diff
-        if not diff_text:
-            diff = difflib.ndiff([original_normalized], [stripped])
+            # If diff is empty (single-line difference), show character-level diff
+            if not diff_text:
+                diff = difflib.ndiff([original_normalized], [stripped])
+                diff_text = '\n'.join(diff)
+
+            return False, diff_text
+
+        return True, None
+    else:
+        # Flexible mode: validate word sequence preservation
+        from grammar_generator import tokenize_words
+        original_words = tokenize_words(original)
+        formatted_words = tokenize_words(formatted)
+
+        if original_words != formatted_words:
+            # Generate word-level diff
+            diff = difflib.unified_diff(
+                [' '.join(original_words)],
+                [' '.join(formatted_words)],
+                fromfile='expected (original words)',
+                tofile='actual (output words)',
+                lineterm=''
+            )
             diff_text = '\n'.join(diff)
 
-        return False, diff_text
+            return False, diff_text
 
-    return True, None
+        return True, None
 
 
 def reformat_text(
@@ -79,6 +102,7 @@ def reformat_text(
     model: str = "accounts/fireworks/models/qwen3-235b-a22b-instruct-2507",
     temperature: float = 0.7,
     system_prompt: Optional[str] = None,
+    strict_spacing: bool = False,
     allow_paragraphs: bool = True,
     verbose: bool = False
 ) -> tuple[str, Optional[str]]:
@@ -90,7 +114,8 @@ def reformat_text(
         model: Fireworks model to use
         temperature: Sampling temperature (0-1)
         system_prompt: Optional system prompt to guide formatting choices
-        allow_paragraphs: Whether to allow paragraph breaks
+        strict_spacing: If True, preserve exact spacing (default: False)
+        allow_paragraphs: Whether to allow paragraph breaks (strict mode only)
         verbose: Print debug information
 
     Returns:
@@ -107,8 +132,8 @@ def reformat_text(
 
     # Generate grammar
     if verbose:
-        print("Generating grammar...")
-    grammar = generate_grammar(text, allow_paragraphs=allow_paragraphs)
+        print(f"Generating grammar (strict_spacing={strict_spacing})...")
+    grammar = generate_grammar(text, strict_spacing=strict_spacing, allow_paragraphs=allow_paragraphs)
 
     if verbose:
         print(f"Grammar size: {len(grammar)} characters, {len(grammar.split(chr(10)))} lines")
@@ -119,14 +144,25 @@ def reformat_text(
 
     # Prepare messages
     if system_prompt is None:
-        system_prompt = """You are a text formatter. Your task is to add markdown formatting (bold with **, italic with *, and paragraph breaks with \\n\\n) to make the text more readable and emphasize important points.
+        if strict_spacing:
+            system_prompt = """You are a text formatter. Your task is to add markdown formatting (bold with **, italic with *, and paragraph breaks with \\n\\n) to make the text more readable and emphasize important points.
 
 Guidelines:
 - Use **bold** for key concepts, important terms, and emphasis
 - Use *italics* for subtle emphasis, quotes, or asides
 - Add paragraph breaks (\\n\\n) at natural stopping points to improve readability
-- The grammar constrains you to output the exact words in order - you only choose where to add formatting
+- The grammar constrains you to output the exact words in order with exact spacing - you only choose where to add formatting
 - Be thoughtful about formatting - not everything needs emphasis"""
+        else:
+            system_prompt = """You are a text formatter and editor. Your task is to reformat text by adding punctuation, markdown formatting (bold with **, italic with *), and paragraph breaks (\\n\\n) to make it more readable and emphasize important points.
+
+Guidelines:
+- Add proper punctuation (periods, commas, semicolons, etc.) where needed
+- Use **bold** for key concepts, important terms, and emphasis
+- Use *italics* for subtle emphasis, quotes, or asides
+- Add paragraph breaks (\\n\\n) at natural stopping points to improve readability
+- The grammar constrains you to output the exact words in the exact order - you can add any punctuation, whitespace, or formatting you want
+- Be thoughtful about formatting and punctuation - improve readability while maintaining the original meaning"""
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -138,20 +174,27 @@ Guidelines:
         print("Calling Fireworks AI...")
 
     try:
-        response = client.chat.completions.create(
+        # Fireworks requires stream=True for max_tokens > 5000
+        stream = client.chat.completions.create(
             model=model,
             messages=messages,
             response_format={
                 "type": "grammar",
                 "grammar": grammar
             },
-            temperature=temperature
+            temperature=temperature,
+            max_tokens=131072,  # Llama 3.1 70B max context window
+            stream=True
         )
 
-        formatted_text = response.choices[0].message.content
+        # Collect streamed response
+        formatted_text = ""
+        for chunk in stream:
+            if chunk.choices[0].delta.content:
+                formatted_text += chunk.choices[0].delta.content
 
-        # Validate output preserves original text
-        is_valid, diff = validate_output(text, formatted_text)
+        # Validate output preserves original text (or word sequence in flexible mode)
+        _, diff = validate_output(text, formatted_text, strict_spacing=strict_spacing)
 
         return formatted_text, diff
 
@@ -188,9 +231,14 @@ def main():
         help="Sampling temperature (0-1)"
     )
     parser.add_argument(
+        "--strict-spacing",
+        action="store_true",
+        help="Preserve exact spacing (default: flexible punctuation/whitespace)"
+    )
+    parser.add_argument(
         "--no-paragraphs",
         action="store_true",
-        help="Disable paragraph breaks"
+        help="Disable paragraph breaks (strict spacing mode only)"
     )
     parser.add_argument(
         "-v", "--verbose",
@@ -201,6 +249,11 @@ def main():
         "--system-prompt",
         type=str,
         help="Custom system prompt for formatting guidance"
+    )
+    parser.add_argument(
+        "--dump-grammar",
+        action="store_true",
+        help="Generate and dump the grammar, then exit without calling API"
     )
 
     args = parser.parse_args()
@@ -223,6 +276,14 @@ def main():
         print("Error: No input text provided", file=sys.stderr)
         sys.exit(1)
 
+    # Handle --dump-grammar flag
+    if args.dump_grammar:
+        if args.verbose:
+            print("Generating grammar...", file=sys.stderr)
+        grammar = generate_grammar(text, strict_spacing=args.strict_spacing, allow_paragraphs=not args.no_paragraphs)
+        print(grammar)
+        sys.exit(0)
+
     # Reformat text
     try:
         formatted, validation_diff = reformat_text(
@@ -230,6 +291,7 @@ def main():
             model=args.model,
             temperature=args.temperature,
             system_prompt=args.system_prompt,
+            strict_spacing=args.strict_spacing,
             allow_paragraphs=not args.no_paragraphs,
             verbose=args.verbose
         )
