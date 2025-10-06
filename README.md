@@ -78,7 +78,7 @@ Possible Output:
 The times ahead will be *radically different*...
 ```
 
-## How the Grammar Works
+## How the Grammar Works (in the strict balance mode)
 
 For each word position and formatting state, the grammar generates rules that:
 - Enforce the exact next word
@@ -93,8 +93,7 @@ seq-0-plain ::= "The" " " seq-1-plain
               | "*" "The" " " seq-1-italic
 ```
 
-## Complexity
-
-- Grammar size: O(n � 2^f) where n = word count, f = formatting types
-- For 1000 words with bold/italic: ~4000 grammar rules
-- Linear scaling with text length
+In the non-strict mode, the grammar is much simpler:
+```
+root ::= <any punctuation, whitespace, formatting, etc.> <word> <any punctuation, whitespace, formatting, etc.>
+```
