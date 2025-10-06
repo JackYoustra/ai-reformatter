@@ -75,6 +75,5 @@ pos-2-bold-italic ::= "sat" "**" "*"
 - States per position = 2^f = 4
 - Total states = n × 2^f = 3 × 4 = 12
 
-**You're right!** It's O(n × 2^f) which is linear in n.
-For typical f=2 or f=3, this is just O(n × 4) or O(n × 8).
-Totally manageable!
+The complexity is O(n × 2^f) which is linear in n.
+For typical f=2 or f=3, this scales as O(n × 4) or O(n × 8), which is very manageable.
