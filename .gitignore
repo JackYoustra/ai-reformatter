@@ -12,8 +12,11 @@ wheels/
 # Environment variables
 .env
 
-# hypothesis
+# Testing
 .hypothesis/
-
-# pytest
 .pytest_cache/
+.mypy_cache/
+
+# Test outputs and temporary files
+*-grammar.txt
+changing_world_order.md
