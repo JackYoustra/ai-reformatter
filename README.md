@@ -1,3 +1,7 @@
+# DISCLAIMER
+
+100% vibe coded. Not a serious project. Intention is to use in conjuction with a blob of voice text.
+
 # Text Reformatter with Grammar-Constrained Generation
 
 A tool that uses Fireworks AI's grammar mode to reformat text while preserving the exact word sequence. The LLM has sole discretion over formatting choices (bold, italic, paragraph breaks) but cannot change, add, or remove any words.
@@ -91,6 +95,6 @@ seq-0-plain ::= "The" " " seq-1-plain
 
 ## Complexity
 
-- Grammar size: O(n × 2^f) where n = word count, f = formatting types
+- Grammar size: O(n ï¿½ 2^f) where n = word count, f = formatting types
 - For 1000 words with bold/italic: ~4000 grammar rules
 - Linear scaling with text length
